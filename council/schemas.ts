@@ -15,10 +15,21 @@ export const PeerCritiqueSchema = z.object({
 
 // One entry per peer shown. A full council shows 2 peers; a degraded council
 // of 2 drafters shows 1. Fixing this at 2 would fail every degraded run.
-export const CritiqueOutputSchema = z.object({
-  critiques: z.array(PeerCritiqueSchema).min(1).max(2),
-  revised_answer: NonEmpty,
-})
+export const CritiqueOutputSchema = z
+  .object({
+    critiques: z.array(PeerCritiqueSchema).min(1).max(2),
+    revised_answer: NonEmpty,
+  })
+  .superRefine((data, ctx) => {
+    const targets = data.critiques.map((c) => c.target)
+    if (new Set(targets).size !== targets.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Each peer must be critiqued at most once — duplicate targets are not allowed',
+        path: ['critiques'],
+      })
+    }
+  })
 
 export const ProvenanceEntrySchema = z.object({
   claim: NonEmpty,

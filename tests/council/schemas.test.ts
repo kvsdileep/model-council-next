@@ -51,6 +51,12 @@ describe('CritiqueOutputSchema', () => {
     expect(() => CritiqueOutputSchema.parse(three)).toThrow()
   })
 
+  it('rejects duplicate critique targets', () => {
+    const dup = structuredClone(validCritique)
+    dup.critiques[1].target = 'A'
+    expect(() => CritiqueOutputSchema.parse(dup)).toThrow()
+  })
+
   it('rejects a non-empty revised_answer requirement violation', () => {
     const bad = structuredClone(validCritique)
     bad.revised_answer = ''

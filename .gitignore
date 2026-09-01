@@ -1,2 +1,7 @@
 .worktrees
 .superpowers
+node_modules
+.next
+.env
+*.db
+*.db-journal

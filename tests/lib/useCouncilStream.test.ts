@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest'
-import { reduceEvent, INITIAL_STATE } from '@/lib/useCouncilStream'
+import { describe, it, expect, afterEach } from 'vitest'
+import { reduceEvent, INITIAL_STATE, startCouncilStream } from '@/lib/useCouncilStream'
+import type { StreamState } from '@/lib/useCouncilStream'
 import type { CouncilEvent } from '@/council/events'
 import { DEFAULT_CONFIG } from '@/council/config'
 
@@ -90,5 +91,29 @@ describe('reduceEvent', () => {
     const after = reduceEvent(before, { type: 'token', seat: 1, text: 'b' })
     expect(before.drafts[1].text).toBe('a')
     expect(after.drafts[1].text).toBe('ab')
+  })
+})
+
+describe('startCouncilStream', () => {
+  const originalFetch = globalThis.fetch
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+  })
+
+  it('marks the run failed when fetch throws', async () => {
+    globalThis.fetch = async () => {
+      throw new Error('Failed to fetch')
+    }
+
+    let state: StreamState = INITIAL_STATE
+    const setState = (update: StreamState | ((prev: StreamState) => StreamState)) => {
+      state = typeof update === 'function' ? update(state) : update
+    }
+
+    await startCouncilStream('what is quorum?', DEFAULT_CONFIG, setState)
+
+    expect(state.status).toBe('failed')
+    expect(state.error).toBe('Failed to fetch')
   })
 })

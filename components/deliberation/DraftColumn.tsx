@@ -8,10 +8,16 @@ const estimateTokens = (text: string) => Math.ceil(text.length / 4)
 
 export function DraftColumn({ seat, view }: { seat: Seat; view?: SeatView }) {
   const v = view ?? { text: '', status: 'streaming' as const }
+  const modelShort = seat.model.includes('/') ? seat.model.split('/')[1] : seat.model
   return (
     <article className={`${styles.column} ${v.status === 'failed' ? styles.failed : ''}`}>
       <div className={styles.head}>
-        <span className={styles.filename}>draft_{seat.id}.md</span>
+        <span>
+          <span className={styles.filename}>draft_{seat.id}.md</span>
+          <span className={styles.seatModel}>
+            {seat.label} · {modelShort}
+          </span>
+        </span>
         <span className={styles.meta}>
           <span className={styles.tokens}>{estimateTokens(v.text)} tok</span>
           <span className={styles.perm}>-rw-r--r--</span>

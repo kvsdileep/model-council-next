@@ -14,6 +14,7 @@
 
 .head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .filename { color: var(--phosphor); text-shadow: var(--glow-soft); font-size: 13px; }
+.seatModel { display: block; color: var(--phosphor-dim); font-size: 11px; margin-top: 2px; }
 .meta { display: flex; align-items: baseline; gap: 10px; font-size: 11px; white-space: nowrap; }
 .tokens { color: var(--amber); }
 .perm { color: var(--phosphor-faint); }

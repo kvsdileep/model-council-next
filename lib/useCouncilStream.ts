@@ -79,12 +79,17 @@ export function reduceEvent(state: StreamState, e: CouncilEvent): StreamState {
   }
 }
 
-export function useCouncilStream() {
-  const [state, setState] = useState<StreamState>(INITIAL_STATE)
+type SetStreamState = (update: StreamState | ((prev: StreamState) => StreamState)) => void
 
-  const start = useCallback(async (query: string, config: CouncilConfig) => {
-    setState({ ...INITIAL_STATE, status: 'running' })
+/** Exported for focused fetch/stream failure tests without a React harness. */
+export async function startCouncilStream(
+  query: string,
+  config: CouncilConfig,
+  setState: SetStreamState,
+): Promise<void> {
+  setState({ ...INITIAL_STATE, status: 'running' })
 
+  try {
     const res = await fetch('/api/council', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -114,6 +119,17 @@ export function useCouncilStream() {
         setState((s) => reduceEvent(s, e))
       }
     }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'network error'
+    setState((s) => ({ ...s, status: 'failed', error: reason.slice(0, 300) }))
+  }
+}
+
+export function useCouncilStream() {
+  const [state, setState] = useState<StreamState>(INITIAL_STATE)
+
+  const start = useCallback(async (query: string, config: CouncilConfig) => {
+    await startCouncilStream(query, config, setState)
   }, [])
 
   return { state, start }

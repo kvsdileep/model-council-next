@@ -20,3 +20,7 @@ model Run {
   elapsedMs Int      @default(0)
   createdAt DateTime @default(now())
 }
+
+// Production: change provider to "postgresql" and point DATABASE_URL at Neon.
+// The String JSON blobs work unchanged; switching them to Json is optional
+// and only affects lib/db.ts serialize/deserialize.

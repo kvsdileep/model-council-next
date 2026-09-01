@@ -29,7 +29,7 @@
 .navLink:hover { color: var(--phosphor); text-shadow: var(--glow-soft); }
 
 .status { display: flex; align-items: center; gap: 7px; color: var(--amber); font-size: 12px; }
-.statusDot { width: 7px; height: 7px; border-radius: 4px; animation: blink 1.6s step-end infinite; }
+.statusDot { width: 7px; height: 7px; border-radius: 4px; animation: :global(blink) 1.6s step-end infinite; }
 
 .body { padding: 28px 32px 40px; }
 

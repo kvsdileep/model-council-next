@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { CritiqueOutputSchema, VerdictSchema } from '@/council/schemas'
-import { DEFAULT_CONFIG } from '@/council/config'
+import { CouncilConfigSchema, CouncilPostBodySchema, DEFAULT_CONFIG } from '@/council/config'
 
 const validCritique = {
   critiques: [
@@ -110,5 +110,42 @@ describe('DEFAULT_CONFIG', () => {
 
   it('assigns stable sequential seat ids', () => {
     expect(DEFAULT_CONFIG.drafters.map((s) => s.id)).toEqual([1, 2, 3])
+  })
+})
+
+describe('CouncilPostBodySchema', () => {
+  const seat = { id: 1, model: 'm', label: 'Seat 1', lab: 'L' }
+
+  it('accepts query-only bodies and leaves config optional', () => {
+    const out = CouncilPostBodySchema.parse({ query: '  hello  ' })
+    expect(out.query).toBe('hello')
+    expect(out.config).toBeUndefined()
+  })
+
+  it('rejects more than three drafters', () => {
+    expect(() =>
+      CouncilConfigSchema.parse({
+        drafters: [seat, { ...seat, id: 2 }, { ...seat, id: 3 }, { ...seat, id: 4 }],
+        judge: { ...seat, id: 0 },
+        timeoutMs: 90_000,
+      }),
+    ).toThrow()
+  })
+
+  it('clamps timeoutMs into 1000–180000', () => {
+    expect(
+      CouncilConfigSchema.parse({
+        drafters: [seat],
+        judge: { ...seat, id: 0 },
+        timeoutMs: 50,
+      }).timeoutMs,
+    ).toBe(1000)
+    expect(
+      CouncilConfigSchema.parse({
+        drafters: [seat],
+        judge: { ...seat, id: 0 },
+        timeoutMs: 999_999,
+      }).timeoutMs,
+    ).toBe(180_000)
   })
 })

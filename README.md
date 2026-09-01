@@ -59,6 +59,9 @@ whole protocol is tested against deterministic fakes with no network access.
 `app/api/council/route.ts` is a thin SSE adapter over it. Wrapping the same
 engine as a CLI or MCP server needs no changes to its logic.
 
+Local persistence uses SQLite via Prisma; production should swap the Prisma
+datasource to the documented Postgres provider.
+
 Failure policy: a single seat failing degrades the run rather than killing
 it. Quorum is two drafters plus the judge. If the judge fails, the run fails
 — promoting a drafter would reintroduce the self-preference bias the roster

@@ -11,14 +11,38 @@ export class SeatFailure extends Error {
   }
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms)
-    p.then(
-      (v) => { clearTimeout(timer); resolve(v) },
-      (e) => { clearTimeout(timer); reject(e) },
-    )
-  })
+/**
+ * Run `fn` with an AbortSignal that fires when `ms` elapses, so the provider
+ * can cancel the in-flight HTTP call before any retry. Also reject on the
+ * timer so a provider that ignores the signal cannot hang forever.
+ */
+async function withTimeout<T>(
+  fn: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  what: string,
+): Promise<T> {
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort()
+        reject(new Error(`${what} timed out after ${ms}ms`))
+      }, ms)
+      fn(controller.signal).then(
+        (v) => resolve(v),
+        (e) => {
+          if (controller.signal.aborted) {
+            reject(new Error(`${what} timed out after ${ms}ms`))
+          } else {
+            reject(e)
+          }
+        },
+      )
+    })
+  } finally {
+    if (timer !== undefined) clearTimeout(timer)
+  }
 }
 
 /** One timeout-guarded attempt, then one jittered retry. Spec section 10. */
@@ -28,11 +52,19 @@ export async function callWithRetry(
   timeoutMs: number,
 ): Promise<Completion> {
   try {
-    return await withTimeout(provider.complete(req), timeoutMs, req.model)
+    return await withTimeout(
+      (signal) => provider.complete({ ...req, signal }),
+      timeoutMs,
+      req.model,
+    )
   } catch (first) {
     await new Promise((r) => setTimeout(r, 250 + Math.random() * 500))
     try {
-      return await withTimeout(provider.complete(req), timeoutMs, req.model)
+      return await withTimeout(
+        (signal) => provider.complete({ ...req, signal }),
+        timeoutMs,
+        req.model,
+      )
     } catch (second) {
       throw new SeatFailure(
         `${req.model} failed twice: ${(first as Error).message} / ${(second as Error).message}`,

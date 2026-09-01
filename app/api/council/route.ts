@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { runCouncil } from '@/council/orchestrator'
-import { DEFAULT_CONFIG, type CouncilConfig } from '@/council/config'
+import { CouncilPostBodySchema, DEFAULT_CONFIG } from '@/council/config'
 import { createOpenRouterProvider } from '@/council/providers/openrouter'
 import { encodeEvent } from '@/lib/sse'
 import { saveRun } from '@/lib/db'
@@ -19,16 +19,29 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  const body = (await req.json()) as { query?: string; config?: CouncilConfig }
-  const query = body.query?.trim()
-  if (!query) {
-    return new Response(JSON.stringify({ error: 'query is required' }), {
+  let raw: unknown
+  try {
+    raw = await req.json()
+  } catch {
+    return new Response(JSON.stringify({ error: 'invalid JSON body' }), {
       status: 400,
       headers: { 'content-type': 'application/json' },
     })
   }
 
-  const config = body.config ?? DEFAULT_CONFIG
+  const parsed = CouncilPostBodySchema.safeParse(raw)
+  if (!parsed.success) {
+    return new Response(
+      JSON.stringify({ error: 'invalid request', details: parsed.error.flatten() }),
+      {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      },
+    )
+  }
+
+  const query = parsed.data.query
+  const config = parsed.data.config ?? DEFAULT_CONFIG
   const provider = createOpenRouterProvider(apiKey)
   const encoder = new TextEncoder()
 

@@ -3,6 +3,7 @@ import type { Emit } from '../events'
 import type { Provider, Usage } from '../providers/types'
 import { ZERO_USAGE } from '../providers/types'
 import { completeJson } from '../call'
+import { scrubSelfReferences } from '../anonymize'
 import { VerdictSchema, type Verdict } from '../schemas'
 import type { DraftResult, SeatStatus } from './draft'
 import type { CritiqueResult } from './critique'
@@ -66,7 +67,7 @@ function buildUserPrompt(
   const parts: string[] = [`QUESTION:\n${query}`, '']
 
   for (const d of drafts.filter((x) => x.status === 'ok')) {
-    parts.push(`--- SEAT ${d.seatId} ORIGINAL DRAFT ---\n${d.text}`, '')
+    parts.push(`--- SEAT ${d.seatId} ORIGINAL DRAFT ---\n${scrubSelfReferences(d.text)}`, '')
   }
 
   for (const c of critiques.filter((x) => x.status === 'ok' && x.payload)) {
@@ -81,7 +82,10 @@ function buildUserPrompt(
       ].join('\n')
     })
     parts.push(`--- SEAT ${c.seatId} CRITIQUES ---\n${lines.join('\n')}`, '')
-    parts.push(`--- SEAT ${c.seatId} REVISED ANSWER ---\n${c.payload!.revised_answer}`, '')
+    parts.push(
+      `--- SEAT ${c.seatId} REVISED ANSWER ---\n${scrubSelfReferences(c.payload!.revised_answer)}`,
+      '',
+    )
   }
 
   return parts.join('\n')

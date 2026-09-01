@@ -10,14 +10,24 @@ import { DEFAULT_CONFIG } from '@/council/config'
 import styles from '@/components/deliberation/deliberation.module.css'
 
 export function DeliberationScreen({ query }: { query: string }) {
-  const { state, start } = useCouncilStream()
+  const { state, start, cancel } = useCouncilStream()
   const router = useRouter()
 
+  // Defer start so React Strict Mode's mount→cleanup→remount cancels the
+  // first timer and only the surviving mount POSTs once. Cleanup still aborts
+  // any in-flight fetch/reader on real unmount.
   useEffect(() => {
-    void start(query, DEFAULT_CONFIG)
-  }, [query, start])
+    const timer = setTimeout(() => {
+      void start(query, DEFAULT_CONFIG)
+    }, 0)
+    return () => {
+      clearTimeout(timer)
+      cancel()
+    }
+  }, [query, start, cancel])
 
-  // The verdict lives at its own URL so the run is shareable — spec section 14.
+  // Navigate only after the SSE reader finishes (status=done), so saveRun
+  // has completed. runId comes from run_started / run_done.
   useEffect(() => {
     if (state.status === 'done' && state.runId) router.push(`/run/${state.runId}`)
   }, [state.status, state.runId, router])

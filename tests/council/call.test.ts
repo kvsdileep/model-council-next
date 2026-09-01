@@ -58,6 +58,22 @@ describe('callWithRetry', () => {
     }
     await expect(callWithRetry(p, { model: 'm', system: 's', user: 'u' }, 20)).rejects.toThrow(/timed out/i)
   })
+
+  it('aborts the in-flight complete when the timeout fires', async () => {
+    let sawAbort = false
+    const p: Provider = {
+      complete: ({ signal }) =>
+        new Promise((_, reject) => {
+          signal?.addEventListener('abort', () => {
+            sawAbort = true
+            reject(new DOMException('Aborted', 'AbortError'))
+          })
+        }),
+      stream() { throw new Error('not used') },
+    }
+    await expect(callWithRetry(p, { model: 'm', system: 's', user: 'u' }, 20)).rejects.toThrow(/timed out/i)
+    expect(sawAbort).toBe(true)
+  })
 })
 
 describe('completeJson', () => {

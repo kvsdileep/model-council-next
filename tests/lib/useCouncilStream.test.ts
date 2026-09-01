@@ -3,6 +3,7 @@ import { reduceEvent, INITIAL_STATE, startCouncilStream } from '@/lib/useCouncil
 import type { StreamState } from '@/lib/useCouncilStream'
 import type { CouncilEvent } from '@/council/events'
 import { DEFAULT_CONFIG } from '@/council/config'
+import { encodeEvent } from '@/lib/sse'
 
 function apply(events: CouncilEvent[]) {
   return events.reduce(reduceEvent, INITIAL_STATE)
@@ -71,12 +72,13 @@ describe('reduceEvent', () => {
     expect(s.verdict!.answer_markdown).toBe('# A')
   })
 
-  it('marks the run done and totals usage', () => {
+  it('records runId and usage on run_done without marking done yet', () => {
     const s = apply([
       { type: 'run_started', runId: 'r1', config: DEFAULT_CONFIG },
       { type: 'run_done', runId: 'r1', usage: { promptTokens: 700, completionTokens: 350, costUsd: 0.08 } },
     ])
-    expect(s.status).toBe('done')
+    expect(s.status).toBe('running')
+    expect(s.runId).toBe('r1')
     expect(s.usage.costUsd).toBe(0.08)
   })
 
@@ -115,5 +117,72 @@ describe('startCouncilStream', () => {
 
     expect(state.status).toBe('failed')
     expect(state.error).toBe('Failed to fetch')
+  })
+
+  it('marks done only after the SSE reader finishes, keeping runId from run_done', async () => {
+    const frames = [
+      encodeEvent({ type: 'run_started', runId: 'r1', config: DEFAULT_CONFIG }),
+      encodeEvent({
+        type: 'run_done',
+        runId: 'r1',
+        usage: { promptTokens: 1, completionTokens: 1, costUsd: 0.01 },
+      }),
+    ].join('')
+
+    globalThis.fetch = async () => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(frames))
+          controller.close()
+        },
+      })
+      return new Response(stream, { status: 200 })
+    }
+
+    let state: StreamState = INITIAL_STATE
+    const setState = (update: StreamState | ((prev: StreamState) => StreamState)) => {
+      state = typeof update === 'function' ? update(state) : update
+    }
+
+    await startCouncilStream('q', DEFAULT_CONFIG, setState)
+
+    expect(state.status).toBe('done')
+    expect(state.runId).toBe('r1')
+    expect(state.usage.costUsd).toBe(0.01)
+  })
+
+  it('aborts the reader when the signal aborts and does not mark failed', async () => {
+    const ac = new AbortController()
+    globalThis.fetch = async (_input, init) => {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode(
+              encodeEvent({ type: 'run_started', runId: 'r1', config: DEFAULT_CONFIG }),
+            ),
+          )
+          init?.signal?.addEventListener('abort', () => {
+            try {
+              controller.close()
+            } catch {
+              // already closed by reader.cancel
+            }
+          })
+        },
+      })
+      return new Response(stream, { status: 200 })
+    }
+
+    let state: StreamState = INITIAL_STATE
+    const setState = (update: StreamState | ((prev: StreamState) => StreamState)) => {
+      state = typeof update === 'function' ? update(state) : update
+    }
+
+    const done = startCouncilStream('q', DEFAULT_CONFIG, setState, ac.signal)
+    await new Promise((r) => setTimeout(r, 10))
+    ac.abort()
+    await done
+
+    expect(state.status).not.toBe('failed')
   })
 })

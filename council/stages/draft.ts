@@ -29,24 +29,13 @@ export const DRAFT_SYSTEM = [
   '- Use markdown. Keep it tight.',
 ].join('\n')
 
-async function draftOne(
+async function streamDraft(
   seat: Seat,
   query: string,
   timeoutMs: number,
   provider: Provider,
   emit: Emit,
-): Promise<DraftResult> {
-  emit({ type: 'seat_started', seat: seat.id, model: seat.model })
-
-  const base: DraftResult = {
-    seatId: seat.id,
-    model: seat.model,
-    label: seat.label,
-    text: '',
-    usage: ZERO_USAGE,
-    status: 'ok',
-  }
-
+): Promise<{ text: string; usage: Usage }> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
@@ -65,14 +54,46 @@ async function draftOne(
     }
 
     const completion = await handle.done
-    emit({ type: 'seat_done', seat: seat.id, usage: completion.usage })
-    return { ...base, text: text || completion.text, usage: completion.usage }
+    return { text: text || completion.text, usage: completion.usage }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function draftOne(
+  seat: Seat,
+  query: string,
+  timeoutMs: number,
+  provider: Provider,
+  emit: Emit,
+): Promise<DraftResult> {
+  emit({ type: 'seat_started', seat: seat.id, model: seat.model })
+
+  const base: DraftResult = {
+    seatId: seat.id,
+    model: seat.model,
+    label: seat.label,
+    text: '',
+    usage: ZERO_USAGE,
+    status: 'ok',
+  }
+
+  // Spec §10: every call gets one retry — streams included.
+  try {
+    try {
+      const result = await streamDraft(seat, query, timeoutMs, provider, emit)
+      emit({ type: 'seat_done', seat: seat.id, usage: result.usage })
+      return { ...base, text: result.text, usage: result.usage }
+    } catch {
+      await new Promise((r) => setTimeout(r, 250 + Math.random() * 500))
+      const result = await streamDraft(seat, query, timeoutMs, provider, emit)
+      emit({ type: 'seat_done', seat: seat.id, usage: result.usage })
+      return { ...base, text: result.text, usage: result.usage }
+    }
   } catch (e) {
     const reason = (e as Error).message
     emit({ type: 'seat_failed', seat: seat.id, reason })
     return { ...base, status: 'failed', error: reason }
-  } finally {
-    clearTimeout(timer)
   }
 }
 

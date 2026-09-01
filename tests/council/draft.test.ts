@@ -3,6 +3,9 @@ import { runDraftStage, DRAFT_SYSTEM } from '@/council/stages/draft'
 import { makeFakeProvider } from '@/council/providers/fake'
 import type { CouncilEvent } from '@/council/events'
 import type { CouncilConfig } from '@/council/config'
+import type { Provider, StreamHandle } from '@/council/providers/types'
+
+const ZU = { promptTokens: 1, completionTokens: 1, costUsd: 0 }
 
 const config: CouncilConfig = {
   drafters: [
@@ -80,5 +83,45 @@ describe('runDraftStage', () => {
 
   it('instructs the drafter not to identify itself', () => {
     expect(DRAFT_SYSTEM).toMatch(/do not (?:name|identify|mention)/i)
+  })
+
+  it('retries a stream once after failure then succeeds', async () => {
+    let calls = 0
+    const p: Provider = {
+      complete() {
+        throw new Error('not used')
+      },
+      stream(req) {
+        calls++
+        let settle: (c: { text: string; usage: typeof ZU; model: string }) => void = () => {}
+        let fail: (e: unknown) => void = () => {}
+        const done = new Promise<{ text: string; usage: typeof ZU; model: string }>((res, rej) => {
+          settle = res
+          fail = rej
+        })
+        async function* gen() {
+          if (calls === 1) {
+            const err = new Error('stream boom')
+            fail(err)
+            throw err
+          }
+          yield { text: 'recovered' }
+          settle({ text: 'recovered', usage: ZU, model: req.model })
+        }
+        const handle = gen() as unknown as StreamHandle
+        Object.defineProperty(handle, 'done', { value: done })
+        void done.catch(() => {})
+        return handle
+      },
+    }
+
+    const solo = {
+      ...config,
+      drafters: [config.drafters[0]],
+    }
+    const out = await runDraftStage('Q', solo, p, () => {})
+    expect(calls).toBe(2)
+    expect(out[0].status).toBe('ok')
+    expect(out[0].text).toBe('recovered')
   })
 })

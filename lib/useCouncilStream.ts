@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CouncilEvent, Stage } from '@/council/events'
 import type { CouncilConfig } from '@/council/config'
 import type { CritiqueOutput, Verdict } from '@/council/schemas'
@@ -71,7 +71,9 @@ export function reduceEvent(state: StreamState, e: CouncilEvent): StreamState {
     case 'verdict':
       return { ...state, verdict: e.payload, confidenceAdjusted: e.confidenceAdjusted }
     case 'run_done':
-      return { ...state, status: 'done', usage: e.usage }
+      // Keep runId/usage here; status becomes 'done' only when the SSE reader
+      // finishes so saveRun on the server has completed before navigation.
+      return { ...state, runId: e.runId, usage: e.usage }
     case 'run_failed':
       return { ...state, status: 'failed', error: e.reason }
     default:
@@ -81,11 +83,16 @@ export function reduceEvent(state: StreamState, e: CouncilEvent): StreamState {
 
 type SetStreamState = (update: StreamState | ((prev: StreamState) => StreamState)) => void
 
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && (err.name === 'AbortError' || /aborted/i.test(err.message))
+}
+
 /** Exported for focused fetch/stream failure tests without a React harness. */
 export async function startCouncilStream(
   query: string,
   config: CouncilConfig,
   setState: SetStreamState,
+  signal?: AbortSignal,
 ): Promise<void> {
   setState({ ...INITIAL_STATE, status: 'running' })
 
@@ -94,6 +101,7 @@ export async function startCouncilStream(
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ query, config }),
+      signal,
     })
 
     if (!res.ok || !res.body) {
@@ -106,20 +114,46 @@ export async function startCouncilStream(
     const decoder = new TextDecoder()
     let buffer = ''
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      // Keep the trailing partial frame in the buffer.
-      const lastBreak = buffer.lastIndexOf('\n\n')
-      if (lastBreak === -1) continue
-      const complete = buffer.slice(0, lastBreak + 2)
-      buffer = buffer.slice(lastBreak + 2)
-      for (const e of parseEventStream(complete)) {
-        setState((s) => reduceEvent(s, e))
+    const onAbort = () => {
+      void reader.cancel()
+    }
+    signal?.addEventListener('abort', onAbort)
+    if (signal?.aborted) onAbort()
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        // Keep the trailing partial frame in the buffer.
+        const lastBreak = buffer.lastIndexOf('\n\n')
+        if (lastBreak === -1) continue
+        const complete = buffer.slice(0, lastBreak + 2)
+        buffer = buffer.slice(lastBreak + 2)
+        for (const e of parseEventStream(complete)) {
+          setState((s) => reduceEvent(s, e))
+        }
       }
+
+      if (buffer.trim()) {
+        for (const e of parseEventStream(buffer)) {
+          setState((s) => reduceEvent(s, e))
+        }
+      }
+
+      // Aborted mid-stream: reader may close cleanly — do not mark done.
+      if (signal?.aborted) return
+
+      // Reader closed after saveRun — safe to mark done / navigate.
+      setState((s) => {
+        if (s.status !== 'running') return s
+        return { ...s, status: 'done' }
+      })
+    } finally {
+      signal?.removeEventListener('abort', onAbort)
     }
   } catch (err) {
+    if (signal?.aborted || isAbortError(err)) return
     const reason = err instanceof Error ? err.message : 'network error'
     setState((s) => ({ ...s, status: 'failed', error: reason.slice(0, 300) }))
   }
@@ -127,10 +161,22 @@ export async function startCouncilStream(
 
 export function useCouncilStream() {
   const [state, setState] = useState<StreamState>(INITIAL_STATE)
+  const abortRef = useRef<AbortController | null>(null)
 
-  const start = useCallback(async (query: string, config: CouncilConfig) => {
-    await startCouncilStream(query, config, setState)
+  const cancel = useCallback(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
   }, [])
 
-  return { state, start }
+  const start = useCallback(async (query: string, config: CouncilConfig) => {
+    abortRef.current?.abort()
+    const ac = new AbortController()
+    abortRef.current = ac
+    await startCouncilStream(query, config, setState, ac.signal)
+  }, [])
+
+  // Abort in-flight fetch/reader if the hook unmounts (Strict Mode remount).
+  useEffect(() => () => cancel(), [cancel])
+
+  return { state, start, cancel }
 }

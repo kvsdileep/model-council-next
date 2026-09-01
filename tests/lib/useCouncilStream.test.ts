@@ -1,0 +1,94 @@
+import { describe, it, expect } from 'vitest'
+import { reduceEvent, INITIAL_STATE } from '@/lib/useCouncilStream'
+import type { CouncilEvent } from '@/council/events'
+import { DEFAULT_CONFIG } from '@/council/config'
+
+function apply(events: CouncilEvent[]) {
+  return events.reduce(reduceEvent, INITIAL_STATE)
+}
+
+const usage = { promptTokens: 10, completionTokens: 5, costUsd: 0.001 }
+
+describe('reduceEvent', () => {
+  it('marks the run running and records the id', () => {
+    const s = apply([{ type: 'run_started', runId: 'r1', config: DEFAULT_CONFIG }])
+    expect(s.status).toBe('running')
+    expect(s.runId).toBe('r1')
+  })
+
+  it('accumulates streamed tokens per seat', () => {
+    const s = apply([
+      { type: 'run_started', runId: 'r1', config: DEFAULT_CONFIG },
+      { type: 'seat_started', seat: 1, model: 'm1' },
+      { type: 'token', seat: 1, text: 'hel' },
+      { type: 'token', seat: 1, text: 'lo' },
+    ])
+    expect(s.drafts[1].text).toBe('hello')
+    expect(s.drafts[1].status).toBe('streaming')
+  })
+
+  it('keeps seats independent', () => {
+    const s = apply([
+      { type: 'token', seat: 1, text: 'a' },
+      { type: 'token', seat: 2, text: 'b' },
+    ])
+    expect(s.drafts[1].text).toBe('a')
+    expect(s.drafts[2].text).toBe('b')
+  })
+
+  it('marks a seat ok on seat_done', () => {
+    const s = apply([
+      { type: 'token', seat: 1, text: 'a' },
+      { type: 'seat_done', seat: 1, usage },
+    ])
+    expect(s.drafts[1].status).toBe('ok')
+  })
+
+  it('marks a seat failed and keeps the reason', () => {
+    const s = apply([{ type: 'seat_failed', seat: 2, reason: 'timed out' }])
+    expect(s.drafts[2].status).toBe('failed')
+    expect(s.drafts[2].error).toBe('timed out')
+  })
+
+  it('tracks the current stage', () => {
+    const s = apply([
+      { type: 'stage_started', stage: 'draft' },
+      { type: 'stage_done', stage: 'draft' },
+      { type: 'stage_started', stage: 'critique' },
+    ])
+    expect(s.stage).toBe('critique')
+  })
+
+  it('stores the verdict', () => {
+    const verdict = {
+      answer_markdown: '# A',
+      provenance: [],
+      contested: [],
+      confidence: 'high' as const,
+    }
+    const s = apply([{ type: 'verdict', payload: verdict, confidenceAdjusted: false }])
+    expect(s.verdict!.answer_markdown).toBe('# A')
+  })
+
+  it('marks the run done and totals usage', () => {
+    const s = apply([
+      { type: 'run_started', runId: 'r1', config: DEFAULT_CONFIG },
+      { type: 'run_done', runId: 'r1', usage: { promptTokens: 700, completionTokens: 350, costUsd: 0.08 } },
+    ])
+    expect(s.status).toBe('done')
+    expect(s.usage.costUsd).toBe(0.08)
+  })
+
+  it('marks the run failed with a reason', () => {
+    const s = apply([{ type: 'run_failed', runId: 'r1', reason: 'quorum not met' }])
+    expect(s.status).toBe('failed')
+    expect(s.error).toBe('quorum not met')
+  })
+
+  it('does not mutate the previous state', () => {
+    const before = apply([{ type: 'token', seat: 1, text: 'a' }])
+    const after = reduceEvent(before, { type: 'token', seat: 1, text: 'b' })
+    expect(before.drafts[1].text).toBe('a')
+    expect(after.drafts[1].text).toBe('ab')
+  })
+})
